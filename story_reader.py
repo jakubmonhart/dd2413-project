@@ -1,13 +1,14 @@
 from time import sleep
 import random
 from multiprocessing import Process, Event
-from little_red_hood import story
+from little_red_hood import lrh_story
 from engage_senteces import sentences
 from furhat_remote_api import FurhatRemoteAPI
 from collections import deque
 import numpy as np
+import math
 
-ip = '192.168.0.103'
+# ip = '192.168.0.103'
 
 def check_engagement(user_engaged_e):
   
@@ -20,7 +21,7 @@ def check_engagement(user_engaged_e):
   print('I am reading a story for user: ', user_id)
   
   # init 
-  average_len = 20
+  average_len = 40
   engaged_q = deque([1]*average_len, maxlen=average_len)
   default_rot = np.array([0, 180])
 
@@ -35,7 +36,8 @@ def check_engagement(user_engaged_e):
     if (user is None) or (users == []):
       print('User not detected.')
 
-    user_rot = np.array([user.rotation.x, user.rotation.y])
+    alpha = 180 * math.atan2(-user.location.x, user.location.z)/math.pi
+    user_rot = np.array([user.rotation.x, user.rotation.y-alpha])
     disengagement = np.abs(user_rot-default_rot)
     # print(disengagement)
 
@@ -62,15 +64,16 @@ def check_engagement(user_engaged_e):
     print(disengagement)
     print(engaged_q)
     print(sma)
-    sleep(0.1)  
+    sleep(0.01)  
 
 
 def read(user_engaged_e, story):
-  story_s = story.split('.')[:-1][:5]
+  story_s = lrh_story.split('.')[:-1]
   story_s = [s + '.' for s in story_s]
   furhat = FurhatRemoteAPI(ip)
 
   sentence_i = 0
+  disengagement_count = 0
   while True:
     if user_engaged_e.is_set():
       
@@ -85,26 +88,74 @@ def read(user_engaged_e, story):
         break
 
     else:
-      # Try to engage back
-      sentence = random.choice(sentences)
-      furhat.say(text=sentence, blocking=True)
+      disengagement_count += 1
 
-      # Listen to yes
-      result = furhat.listen()
-      print(result)
-
-      if 'yes' in result.message:
-        furhat.say(text='Great, where did we end?', blocking=True)
-        sleep(0.5)
-        furhat.say(text='Oh, let me just read the last sentence again.', blocking=True)
-        sleep(0.5)
-        user_engaged_e.set()
-
-      elif 'no' in result.message:
-        furhat.say(text='Ok, but just so you know, you made me very sad.', blocking=True)
-        furhat.gesture(name="ExpressSad")
-        break
+      if disengagement_count == 3:
+        furhat.say(text='I see you are not enjoying this one. Maybe you would like to hear another story?', blocking=True)
         
+        # Listen to yes
+        result = furhat.listen()
+        print(result)
+
+        if 'yes' in result.message:
+          # Change the story
+          story_s = lrh_story.split('.')[:-1]
+          story_s = [s + '.' for s in story_s]
+          sentence_i = 0
+          disengagement_count = 0
+          furhat.say(text='Ok, here is another one.', blocking=True)
+          sleep(0.5)
+          user_engaged_e.set()
+
+        if 'no' in result.message:
+          disengagement_count = 0
+          furhat.say(text='Great, where did we end?', blocking=True)
+          sleep(0.5)
+          furhat.say(text='Oh, let me just read the last sentence again.', blocking=True)
+          sleep(0.5)
+          user_engaged_e.set()
+      
+      else:
+        # Try to engage back
+        sentence = random.choice(sentences)
+        furhat.say(text=sentence, blocking=True)
+
+        # Listen to yes
+        result = furhat.listen()
+        print(result)
+
+        if 'yes' in result.message:
+          furhat.say(text='Great, where did we end?', blocking=True)
+          sleep(0.5)
+          furhat.say(text='Oh, let me just read the last sentence again.', blocking=True)
+          sleep(0.5)
+          user_engaged_e.set()
+
+        elif 'no' in result.message:
+          furhat.say(text='Ok, it was nice reading to you, see you next time.', blocking=True)
+          furhat.gesture(name="ExpressSad")
+          break
+
+
+# def attend(user_id):
+#   furhat = FurhatRemoteAPI(ip)
+
+#   while True:
+#     users = furhat.furhat_users_get()
+
+#     user = None
+#     for u in users:
+#       if u.id == user_id:
+#         user = u
+
+#     if (user is None) or (users == []):
+#       print('User not detected.')
+
+#     # Attend
+#     furhat.attend(userid=user_id)
+
+#     sleep(0.5)
+
   
 if __name__=='__main__':
   
@@ -114,21 +165,32 @@ if __name__=='__main__':
   while True:
     users = furhat.get_users()
     print(users)
-    if users is not []:
+    if users != []:
       user_id = users[0].id
       break
     else:
       print('no user detected')
   
+  furhat.say(text='Greetings!', blocking=True)
   furhat.gesture(name="BrowRaise")
-  furhat.gesture(name="Roll")
-  furhat.say(text='Greetings traveler! Whould you like to hear a short story?', blocking=True)
+  result = furhat.listen()
+  furhat.attend(userid=user_id)
+
+  furhat.say(text=
+    'I am a story teller. I read short stories and try to make sure people enjoy them. \
+    If you are enjoying the story, I expect you to look at me. \
+    With that, would you like to hear some story?')
+
+  # furhat.gesture(name="Roll")
+  
+  # furhat.say(text='Greetings traveler! Whould you like to hear a short story?', blocking=True)
 
   while True:
     result = furhat.listen()
+    print(result.message)
     if 'yes' in result.message:
-      furhat.say(text='Great! Let me begin.', blocking=True)
-      print(result.message)
+      furhat.say(text='Ok the, sit comfortably and enjoy the story!', blocking=True)
+      sleep(0.5)
       break
     else:
       # furhat.gesture(name="")
@@ -141,7 +203,10 @@ if __name__=='__main__':
   check_engagement_p.start()
   read_p = Process(target=read, args=(user_engaged_e, story,))
   read_p.start()
+  # attend_p = Process(target=attend, args=(user_id,))
+  # attend_p.start()
 
   check_engagement_p.join()
   read_p.join()
+  # attend_p.join()
   
